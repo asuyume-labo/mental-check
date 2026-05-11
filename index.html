@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>メンタルスクリーニング | アスユメ Labo.</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700;900&display=swap" rel="stylesheet">
-<!-- EmailJS: メール送信 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -193,6 +194,121 @@ function totalScore(){
 }
 function toDay(){return new Date().toLocaleDateString("ja-JP",{year:"numeric",month:"long",day:"numeric"});}
 
+// ── 結果画面をPDF化してbase64で返す ────────────────────────
+async function generatePDFBase64(){
+  const scores=SECTIONS.map(s=>secScore(s.id));
+  const ts=totalScore();
+  const risk=getRisk(ts);
+  const td=toDay();
+
+  // buildPDFと同じprintHTMLを生成
+  const sectionRows=SECTIONS.map((s,i)=>{
+    const sc=scores[i];
+    const lvl=sc>=70?"high":sc>=40?"mid":"low";
+    const tag=lvl==="high"?"要注意":lvl==="mid"?"やや高め":"良好";
+    const tagBg=lvl==="high"?"#FEE2E2":lvl==="mid"?"#FEF3C7":"#DCFCE7";
+    const tagCol=lvl==="high"?"#DC2626":lvl==="mid"?"#D97706":"#16A34A";
+    return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding:4px 0;border-bottom:1px solid #F1F5F9">
+      <span style="font-size:10px;font-weight:700;color:#1E293B;flex:1">${ICONS[s.id]} ${s.title}</span>
+      <div style="width:80px;height:5px;background:#E2E8F0;border-radius:99px;overflow:hidden">
+        <div style="width:${sc}%;height:100%;background:${s.color};border-radius:99px"></div>
+      </div>
+      <span style="font-size:11px;font-weight:800;color:${s.color};min-width:28px;text-align:right">${sc}</span>
+      <span style="font-size:9px;font-weight:700;background:${tagBg};color:${tagCol};padding:1px 6px;border-radius:99px">${tag}</span>
+    </div>`;
+  }).join("");
+
+  const commentRows=SECTIONS.map((s,i)=>{
+    const sc=scores[i];
+    const lvl=sc>=70?"high":sc>=40?"mid":"low";
+    return `<div style="border-left:3px solid ${s.color};padding-left:8px;margin-bottom:6px">
+      <div style="font-size:10px;font-weight:700;color:#1E293B">${ICONS[s.id]} ${s.title} <span style="color:${s.color}">${sc}点</span></div>
+      <div style="font-size:9px;color:#475569;line-height:1.6;margin-top:2px">${COMMENTS[s.id][lvl]}</div>
+    </div>`;
+  }).join("");
+
+  const printHTML=`<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<style>
+  @page{size:A4;margin:10mm 12mm}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Noto Sans JP','Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif;font-size:10px;color:#1E293B;background:white;width:794px}
+  .wrap{max-width:100%;padding:0}
+  .header{background:#0A0A0A;color:#D4AF37;padding:8px 14px;border-radius:7px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .header-title{font-size:13px;font-weight:900}
+  .header-sub{font-size:8px;color:#94A3B8;margin-top:1px}
+  .header-date{font-size:9px;color:#94A3B8}
+  .info-box{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:7px;padding:6px 12px;margin-bottom:8px;display:grid;grid-template-columns:1fr 1fr;gap:3px}
+  .info-row{font-size:9px;color:#475569}
+  .info-label{color:#94A3B8}
+  .score-box{border-radius:9px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;color:white;background:${risk.color}}
+  .score-main{display:flex;align-items:baseline;gap:3px}
+  .score-num{font-size:36px;font-weight:900;line-height:1}
+  .gauge{height:5px;background:linear-gradient(90deg,#10B981 0%,#F59E0B 40%,#F97316 65%,#EF4444 100%);border-radius:99px;position:relative;margin-bottom:10px}
+  .gauge-dot{position:absolute;width:12px;height:12px;border-radius:50%;top:50%;transform:translate(-50%,-50%);border:2px solid white;box-shadow:0 1px 3px rgba(0,0,0,.3);background:${risk.color};left:${ts}%}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+  .box-title{font-size:11px;font-weight:800;color:#0F172A;margin-bottom:6px;padding-bottom:3px;border-bottom:1px solid #E2E8F0}
+  .footer{margin-top:8px;padding-top:6px;border-top:1px solid #E2E8F0;font-size:7px;color:#94A3B8;line-height:1.6}
+</style></head><body>
+<div class="wrap">
+  <div class="header">
+    <div><div class="header-title">アスユメ Labo. メンタルスクリーニング</div><div class="header-sub">Mental Health Screening Report</div></div>
+    <div class="header-date">${td}</div>
+  </div>
+  <div class="info-box">
+    <div class="info-row"><span class="info-label">氏名 </span>${state.name||"—"}</div>
+    <div class="info-row"><span class="info-label">部署 </span>${state.dept||"—"}</div>
+    <div class="info-row"><span class="info-label">年齢 </span>${state.age||"—"}</div>
+    <div class="info-row"><span class="info-label">性別 </span>${state.gender||"—"}</div>
+    ${state.email?`<div class="info-row" style="grid-column:1/-1"><span class="info-label">メール </span>${state.email}</div>`:""}
+  </div>
+  <div class="score-box">
+    <div>
+      <div style="font-size:8px;opacity:.8;margin-bottom:2px">総合ストレス指数</div>
+      <div class="score-main"><span class="score-num">${ts}</span><span style="font-size:14px;opacity:.8">/ 100</span></div>
+    </div>
+    <div style="text-align:right">
+      <div style="background:rgba(255,255,255,.25);padding:3px 12px;border-radius:99px;font-size:12px;font-weight:700;margin-bottom:3px">${risk.label}</div>
+      <div style="font-size:8px;opacity:.9;max-width:220px;line-height:1.5">${risk.desc}</div>
+    </div>
+  </div>
+  <div class="gauge"><div class="gauge-dot"></div></div>
+  <div class="two-col">
+    <div><div class="box-title">領域別スコア</div>${sectionRows}</div>
+    <div><div class="box-title">領域別フィードバック</div>${commentRows}</div>
+  </div>
+  <div class="footer">
+    ※本レポートは医療診断ではありません。高リスクの場合は産業医・専門家へのご相談をお勧めします。<br>
+    ※NIOSH職業性ストレス簡易調査票参考・キャリアコンサルタント向けスクリーニングツール　アスユメ Labo. / ${td}
+  </div>
+</div></body></html>`;
+
+  // 画面外に隠しiframeを作成してHTMLをレンダリング
+  const iframe=document.createElement("iframe");
+  iframe.style.cssText="position:fixed;left:-9999px;top:0;width:794px;height:1123px;border:none;visibility:hidden";
+  document.body.appendChild(iframe);
+  iframe.contentDocument.open();
+  iframe.contentDocument.write(printHTML);
+  iframe.contentDocument.close();
+
+  // フォント読み込み待ち
+  await new Promise(r=>setTimeout(r,800));
+
+  const canvas=await html2canvas(iframe.contentDocument.body,{
+    scale:2,useCORS:true,logging:false,backgroundColor:"#ffffff",
+    width:794,windowWidth:794
+  });
+  iframe.remove();
+
+  const {jsPDF}=window.jspdf;
+  const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+  const imgData=canvas.toDataURL("image/jpeg",0.9);
+  const pdfW=pdf.internal.pageSize.getWidth();
+  const pdfH=(canvas.height*pdfW)/canvas.width;
+  pdf.addImage(imgData,"JPEG",0,0,pdfW,Math.min(pdfH,297));
+  return pdf.output("datauristring").split(",")[1];
+}
+
 // ── PDF生成（A4一枚・日本語対応・メール添付可能）────────────
 function buildPDF(){
   const scores=SECTIONS.map(s=>secScore(s.id));
@@ -345,7 +461,9 @@ async function sendEmail(){
       return `【${s.title}】${sc}点（${lvl==="high"?"要注意":lvl==="mid"?"やや高め":"良好"}）\n${COMMENTS[s.id][lvl]}`;
     }).join("\n\n");
 
-    // Google Apps Script に送信
+    // PDF生成（結果画面をそのままPDF化）
+    const pdfBase64 = await generatePDFBase64();
+
     // 全質問の回答を収集
     const allAnswers = {};
     SECTIONS.forEach(s=>{
@@ -355,12 +473,11 @@ async function sendEmail(){
           section: s.title,
           question: q,
           answer: state.answers[key]||0,
-          answer_label: OPTIONS[( state.answers[key]||1)-1]
+          answer_label: OPTIONS[(state.answers[key]||1)-1]
         };
       });
     });
 
-    // no-corsモードでは応答確認不可のため、fetch完了で成功とみなす
     await fetch(GAS_URL, {
       method:"POST",
       mode:"no-cors",
@@ -382,11 +499,10 @@ async function sendEmail(){
         score_D:     scores[3],
         score_E:     scores[4],
         answers:     allAnswers,
+        pdf_base64:  pdfBase64,
       })
-    }).catch(()=>{}); // no-corsエラーは無視
+    }).catch(()=>{});
 
-    // PDFを自動印刷・ダウンロード
-    buildPDF();
     state.sendStatus="sent"; render();
   }catch(e){
     console.error(e);
