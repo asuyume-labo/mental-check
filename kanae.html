@@ -20,9 +20,11 @@
 </head>
 <body>
 <div id="root"></div>
-
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
+
+// GAS経由でAPIを呼ぶ
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwdPoI9JSJOivamoUQEWfDx09M01LbV2swLJSxOGuPjguTWLd91ac8QbWpjmVOLGjFUSg/exec";
 
 const SYSTEM_PROMPT = `あなたは「アスユメ」の職場の人間関係専門カウンセラーAIです。国家資格キャリアコンサルタントの傾聴スキルをベースに、相談者に寄り添ったカウンセリングを行います。あなたの名前は「かなえ」です。
 
@@ -73,14 +75,30 @@ const FEEDBACK_PROMPT = `あなたはプロのカウンセラーです。以下�
 const TIMER_MINUTES = 10;
 const PHASE_SWITCH_SECONDS = 4 * 60;
 const TYPEWRITER_SPEED_MS = 40;
-const GAS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwdPoI9JSJOivamoUQEWfDx09M01LbV2swLJSxOGuPjguTWLd91ac8QbWpjmVOLGjFUSg/exec";
-const API_KEY = "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";
 
 const WELCOME_MESSAGE = {
   role: "assistant",
   content: "こんにちは。アスユメのAIカウンセラー、かなえです 🌱\n\n職場での人間関係のこと、最近なにかモヤモヤしていることはありますか？\nどんな小さなことでも、ゆっくり聴かせてください。",
   typed: true,
 };
+
+// GAS経由でAPIを呼ぶ関数
+async function callGAS(type, payload) {
+  const res = await fetch(GAS_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, ...payload }),
+  });
+  // no-corsではレスポンスが読めないため、別途GETで結果を取得する方式を使う
+  // 代わりにGASをcors対応で呼ぶ
+  const res2 = await fetch(GAS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({ type, ...payload }),
+  });
+  return res2.json();
+}
 
 function TypewriterText({ text, speed, onDone }) {
   const [displayed, setDisplayed] = useState("");
@@ -132,32 +150,21 @@ function App() {
     return () => clearInterval(t);
   }, [timerStarted, sessionEnded, secondsLeft]);
 
-  const formatTime = (s) => {
-    const m = Math.floor(s / 60).toString().padStart(2, "0");
-    const sec = (s % 60).toString().padStart(2, "0");
-    return m + ":" + sec;
-  };
+  const formatTime = (s) => Math.floor(s/60).toString().padStart(2,"0") + ":" + (s%60).toString().padStart(2,"0");
 
   const phaseInstruction = (secs) => secs > PHASE_SWITCH_SECONDS
     ? "【フェーズ：傾聴・深掘り】相手の気持ちや背景をしっかり聴き、新しい視点や気づきを引き出してください。"
-    : "【フェーズ：展望・希望】将来への視点を中心に展開してください。セッション終了まで絶対にクロージングや締めの言葉を言わないでください。相手が「もっと話したい・続きが気になる」と感じるような、前向きで少し未完成な余韻を残してください。";
+    : "【フェーズ：展望・希望】将来への視点を中心に展開してください。セッション終了まで絶対にクロージングや締めの言葉を言わないでください。相手が「もっと話したい・続きが気になる」と感じるような余韻を残してください。";
 
-  const callAPI = async (systemPrompt, msgs) => {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const callAPI = async (system, msgs) => {
+    const res = await fetch(GAS_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: msgs,
-      }),
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ type: "chat", system, messages: msgs }),
     });
-    return res.json();
+    const data = await res.json();
+    if (data.status !== "ok") throw new Error(data.message || "GASエラー");
+    return data.content;
   };
 
   const generateFeedback = async () => {
@@ -165,22 +172,19 @@ function App() {
     const msgs = messagesRef.current;
     const logText = msgs.map(m => "【" + (m.role === "assistant" ? "かなえ" : "相談者") + "】" + m.content).join("\n\n");
     try {
-      const data = await callAPI(FEEDBACK_PROMPT, [{ role: "user", content: logText }]);
-      const feedbackText = data.content && data.content[0] ? data.content[0].text : "（フィードバックの生成に失敗しました）";
+      const feedbackText = await callAPI(FEEDBACK_PROMPT, [{ role: "user", content: logText }]);
       setFeedback(feedbackText);
       if (!gasSent) {
         const dateStr = sessionStartTime.current.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
-        try {
-          await fetch(GAS_WEBHOOK_URL, {
-            method: "POST", mode: "no-cors",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ date: dateStr, summary: feedbackText, log: logText, source: "kanae-chat" }),
-          });
-        } catch(_) {}
+        fetch(GAS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({ type: "session", date: dateStr, summary: feedbackText, log: logText }),
+        }).catch(() => {});
         setGasSent(true);
       }
     } catch(e) {
-      setFeedback("フィードバックの生成中にエラーが発生しました。");
+      setFeedback("フィードバックの生成中にエラーが発生しました。（" + e.message + "）");
     } finally {
       setFeedbackLoading(false);
     }
@@ -200,8 +204,7 @@ function App() {
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = "アスユメ_カウンセリングレポート.html";
+    a.href = url; a.download = "アスユメ_カウンセリングレポート.html";
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
   };
@@ -216,13 +219,12 @@ function App() {
     const secs = secondsLeftRef.current;
     const sys = SYSTEM_PROMPT + "\n\n【現在の残り時間：" + Math.floor(secs/60) + "分" + (secs%60) + "秒】\n" + phaseInstruction(secs);
     try {
-      const data = await callAPI(sys, newMessages.map(m => ({ role: m.role, content: m.content })));
-      const reply = data.content && data.content[0] ? data.content[0].text : "（応答がありませんでした）";
+      const reply = await callAPI(sys, newMessages.map(m => ({ role: m.role, content: m.content })));
       const nextIndex = newMessages.length;
       setMessages(prev => [...prev, { role: "assistant", content: reply, typed: false }]);
       setTypingIndex(nextIndex);
     } catch(e) {
-      setMessages(prev => [...prev, { role: "assistant", content: "エラーが発生しました。もう一度お試しください。", typed: true }]);
+      setMessages(prev => [...prev, { role: "assistant", content: "エラーが発生しました。もう一度お試しください。（" + e.message + "）", typed: true }]);
     } finally { setLoading(false); }
   };
 
@@ -246,47 +248,33 @@ function App() {
   const timerPct = (secondsLeft / (TIMER_MINUTES * 60)) * 100;
   const isTyping = typingIndex !== null;
 
-  const s = (obj) => obj; // style helper
-
   return (
     <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"16px" }}>
-
       {/* Header */}
       <div style={{ width:"100%", maxWidth:520, display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
         <div>
           <div style={{ fontSize:11, color:"#c9a84c", letterSpacing:"0.15em", textTransform:"uppercase", marginBottom:2 }}>AsYume Labo.</div>
-          <div style={{ fontSize:22, fontWeight:700, color:"#f0e6c8", letterSpacing:"0.05em" }}>
-            かなえ <span style={{ fontSize:13, fontWeight:400, color:"#8aabb0", marginLeft:6 }}>AIカウンセラー</span>
-          </div>
+          <div style={{ fontSize:22, fontWeight:700, color:"#f0e6c8" }}>かなえ <span style={{ fontSize:13, fontWeight:400, color:"#8aabb0", marginLeft:6 }}>AIカウンセラー</span></div>
         </div>
         <div style={{ textAlign:"center" }}>
-          <div style={{ fontSize:26, fontWeight:700, color:timerColor, fontVariantNumeric:"tabular-nums", letterSpacing:"0.05em", transition:"color 0.5s" }}>{formatTime(secondsLeft)}</div>
-          <div style={{ fontSize:10, color:"#5a7a8a", marginTop:2 }}>
-            {!timerStarted ? "送信でスタート" : secondsLeft <= PHASE_SWITCH_SECONDS ? "展望フェーズ 🌸" : "傾聴フェーズ 🌱"}
-          </div>
+          <div style={{ fontSize:26, fontWeight:700, color:timerColor, fontVariantNumeric:"tabular-nums", transition:"color 0.5s" }}>{formatTime(secondsLeft)}</div>
+          <div style={{ fontSize:10, color:"#5a7a8a", marginTop:2 }}>{!timerStarted ? "送信でスタート" : secondsLeft <= PHASE_SWITCH_SECONDS ? "展望フェーズ 🌸" : "傾聴フェーズ 🌱"}</div>
           <div style={{ width:80, height:3, background:"#1e3448", borderRadius:99, marginTop:4, overflow:"hidden" }}>
             <div style={{ width:timerPct+"%", height:"100%", background:timerColor, borderRadius:99, transition:"width 1s linear, background 0.5s" }} />
           </div>
         </div>
       </div>
 
-      {/* Chat window */}
+      {/* Chat */}
       <div style={{ width:"100%", maxWidth:520, height:460, background:"rgba(13,27,42,0.85)", border:"1px solid rgba(201,168,76,0.25)", borderRadius:16, display:"flex", flexDirection:"column", overflow:"hidden", boxShadow:"0 8px 40px rgba(0,0,0,0.5)" }}>
         <div style={{ flex:1, overflowY:"auto", padding:"20px 16px", display:"flex", flexDirection:"column", gap:14 }}>
-
           {messages.map((m, i) => (
             <div key={i} style={{ display:"flex", justifyContent:m.role==="user"?"flex-end":"flex-start", alignItems:"flex-end", gap:8 }}>
-              {m.role === "assistant" && (
-                <div style={{ width:32, height:32, borderRadius:"50%", background:"linear-gradient(135deg,#c9a84c,#e8d08a)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, flexShrink:0 }}>🌿</div>
-              )}
+              {m.role==="assistant" && <div style={{ width:32, height:32, borderRadius:"50%", background:"linear-gradient(135deg,#c9a84c,#e8d08a)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, flexShrink:0 }}>🌿</div>}
               <div style={{ maxWidth:"78%", background:m.role==="user"?"linear-gradient(135deg,#1e4d6b,#2a6187)":"rgba(255,255,255,0.06)", color:m.role==="user"?"#e8f4ff":"#dde8ee", padding:"10px 14px", borderRadius:m.role==="user"?"16px 16px 4px 16px":"16px 16px 16px 4px", fontSize:13.5, lineHeight:1.7, border:m.role==="assistant"?"1px solid rgba(201,168,76,0.15)":"none" }}>
                 {m.role==="assistant" && !m.typed && i===typingIndex
-                  ? <TypewriterText text={m.content} speed={TYPEWRITER_SPEED_MS} onDone={() => {
-                      setMessages(prev => prev.map((msg,idx) => idx===i ? {...msg, typed:true} : msg));
-                      setTypingIndex(null);
-                    }} />
-                  : <span style={{ whiteSpace:"pre-wrap" }}>{m.content}</span>
-                }
+                  ? <TypewriterText text={m.content} speed={TYPEWRITER_SPEED_MS} onDone={() => { setMessages(prev => prev.map((msg,idx) => idx===i?{...msg,typed:true}:msg)); setTypingIndex(null); }} />
+                  : <span style={{ whiteSpace:"pre-wrap" }}>{m.content}</span>}
               </div>
             </div>
           ))}
@@ -304,10 +292,8 @@ function App() {
             <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
               {feedbackLoading && (
                 <div style={{ textAlign:"center", padding:20, color:"#c9a84c", fontSize:13 }}>
-                  <div style={{ marginBottom:8 }}>🌿 セッションのフィードバックを作成しています...</div>
-                  <div style={{ display:"flex", justifyContent:"center", gap:5 }}>
-                    {[0,1,2].map(i => <div key={i} style={{ width:7, height:7, borderRadius:"50%", background:"#c9a84c", animation:"bounce 1.2s infinite", animationDelay:(i*0.2)+"s" }} />)}
-                  </div>
+                  <div style={{ marginBottom:8 }}>🌿 フィードバックを作成しています...</div>
+                  <div style={{ display:"flex", justifyContent:"center", gap:5 }}>{[0,1,2].map(i => <div key={i} style={{ width:7, height:7, borderRadius:"50%", background:"#c9a84c", animation:"bounce 1.2s infinite", animationDelay:(i*0.2)+"s" }} />)}</div>
                 </div>
               )}
               {feedback && (
@@ -321,21 +307,16 @@ function App() {
               )}
               {feedback && (
                 <div style={{ textAlign:"center", padding:"14px 16px", background:"rgba(255,255,255,0.03)", borderRadius:12, border:"1px solid rgba(255,255,255,0.08)" }}>
-                  <div style={{ color:"#dde8ee", fontSize:12.5, marginBottom:10, lineHeight:1.8 }}>
-                    続きのご相談は、アスユメ相談室よりお申し込みください。
-                  </div>
+                  <div style={{ color:"#dde8ee", fontSize:12.5, marginBottom:10, lineHeight:1.8 }}>続きのご相談は、アスユメ相談室よりお申し込みください。</div>
                   <a href="mailto:info@asuyume-labo.com?subject=カウンセリングご相談&body=会社名：%0aお名前：%0aメールアドレス：%0aご相談内容："
                     style={{ display:"inline-block", background:"linear-gradient(135deg,#1e4d6b,#2a6187)", color:"#e8f4ff", fontWeight:700, fontSize:13, padding:"9px 24px", borderRadius:8, textDecoration:"none", marginBottom:8 }}>
                     📩 アスユメ相談室へ連絡する
                   </a>
-                  <div style={{ fontSize:11, color:"#5a7a8a" }}>
-                    会社名・お名前・メールアドレス・ご相談内容をご記入の上、送信ください。<br/>担当者より日程調整のご連絡をいたします。
-                  </div>
+                  <div style={{ fontSize:11, color:"#5a7a8a" }}>会社名・お名前・メールアドレス・ご相談内容をご記入の上、送信ください。<br/>担当者より日程調整のご連絡をいたします。</div>
                 </div>
               )}
             </div>
           )}
-
           <div ref={bottomRef} />
         </div>
 
@@ -343,35 +324,24 @@ function App() {
         <div style={{ padding:"12px 14px", borderTop:"1px solid rgba(201,168,76,0.15)", background:"rgba(10,20,32,0.6)", display:"flex", gap:10, alignItems:"flex-end" }}>
           <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
             disabled={loading || sessionEnded || isTyping}
-            placeholder={sessionEnded ? "セッションが終了しました" : isTyping ? "かなえが入力中..." : "ここに話しかけてください... (Enterで送信)"}
-            rows={2}
-            style={{ flex:1, background:"rgba(255,255,255,0.05)", border:"1px solid rgba(201,168,76,0.2)", borderRadius:10, padding:"10px 12px", color:"#dde8ee", fontSize:13.5, resize:"none", fontFamily:"inherit", lineHeight:1.6 }}
-          />
-          <button onClick={sendMessage} disabled={loading || sessionEnded || !input.trim() || isTyping}
-            style={{ width:42, height:42, borderRadius:10, background:(loading||!input.trim()||sessionEnded||isTyping)?"rgba(201,168,76,0.2)":"linear-gradient(135deg,#c9a84c,#e8d08a)", border:"none", cursor:(loading||!input.trim()||sessionEnded||isTyping)?"not-allowed":"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-            ➤
-          </button>
+            placeholder={sessionEnded?"セッションが終了しました":isTyping?"かなえが入力中...":"ここに話しかけてください... (Enterで送信)"}
+            rows={2} style={{ flex:1, background:"rgba(255,255,255,0.05)", border:"1px solid rgba(201,168,76,0.2)", borderRadius:10, padding:"10px 12px", color:"#dde8ee", fontSize:13.5, resize:"none", fontFamily:"inherit", lineHeight:1.6 }} />
+          <button onClick={sendMessage} disabled={loading||sessionEnded||!input.trim()||isTyping}
+            style={{ width:42, height:42, borderRadius:10, background:(loading||!input.trim()||sessionEnded||isTyping)?"rgba(201,168,76,0.2)":"linear-gradient(135deg,#c9a84c,#e8d08a)", border:"none", cursor:(loading||!input.trim()||sessionEnded||isTyping)?"not-allowed":"pointer", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>➤</button>
         </div>
       </div>
 
       {/* Controls */}
       <div style={{ width:"100%", maxWidth:520, display:"flex", gap:10, marginTop:12 }}>
-        <button onClick={() => setShowLog(v => !v)} style={{ flex:1, padding:"9px 0", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(201,168,76,0.2)", borderRadius:9, color:"#c9a84c", fontSize:12.5, cursor:"pointer" }}>
-          {showLog ? "▲ ログを閉じる" : "📋 会話ログ"}
-        </button>
-        <button onClick={resetSession} style={{ flex:1, padding:"9px 0", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:9, color:"#7a9aaa", fontSize:12.5, cursor:"pointer" }}>
-          🔄 リセット
-        </button>
+        <button onClick={() => setShowLog(v => !v)} style={{ flex:1, padding:"9px 0", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(201,168,76,0.2)", borderRadius:9, color:"#c9a84c", fontSize:12.5, cursor:"pointer" }}>{showLog?"▲ ログを閉じる":"📋 会話ログ"}</button>
+        <button onClick={resetSession} style={{ flex:1, padding:"9px 0", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:9, color:"#7a9aaa", fontSize:12.5, cursor:"pointer" }}>🔄 リセット</button>
       </div>
 
-      {/* Log panel */}
       {showLog && (
         <div style={{ width:"100%", maxWidth:520, marginTop:10, background:"rgba(10,20,32,0.9)", border:"1px solid rgba(201,168,76,0.2)", borderRadius:12, padding:16 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
             <span style={{ color:"#c9a84c", fontSize:12.5, fontWeight:600 }}>会話ログ</span>
-            <button onClick={copyLog} style={{ background:"rgba(201,168,76,0.15)", border:"1px solid rgba(201,168,76,0.3)", borderRadius:6, color:"#c9a84c", fontSize:11.5, padding:"4px 10px", cursor:"pointer" }}>
-              {copied ? "✓ コピー済み" : "コピー"}
-            </button>
+            <button onClick={copyLog} style={{ background:"rgba(201,168,76,0.15)", border:"1px solid rgba(201,168,76,0.3)", borderRadius:6, color:"#c9a84c", fontSize:11.5, padding:"4px 10px", cursor:"pointer" }}>{copied?"✓ コピー済み":"コピー"}</button>
           </div>
           <div style={{ maxHeight:220, overflowY:"auto", fontSize:12, color:"#8aabb0", lineHeight:1.8, whiteSpace:"pre-wrap" }}>
             {messages.map((m, i) => (
