@@ -756,20 +756,30 @@ async function downloadPDF() {
   btn.disabled = true;
   try {
     const el = document.getElementById('result-content');
-    const canvas = await html2canvas(el, { scale:2, useCORS:true, backgroundColor:'#f0f8ff' });
+    const canvas = await html2canvas(el, { scale:1, useCORS:true, backgroundColor:'#f0f8ff' });
     const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p','mm','a4');
-    const imgW = 210;
-    const imgH = (canvas.height * imgW) / canvas.width;
-    let y = 0;
-    const pageH = 297;
-    while (y < imgH) {
-      if (y > 0) pdf.addPage();
-      pdf.addImage(canvas.toDataURL('image/jpeg',0.92),'JPEG',0,-y,imgW,imgH);
-      y += pageH;
-    }
+
+    // A4サイズ（mm）
+    const A4W = 210;
+    const A4H = 297;
+    const margin = 10;
+    const contentW = A4W - margin * 2;
+    const contentH = A4H - margin * 2;
+
+    // canvasをA4の幅に合わせたときの高さ
+    const imgH = (canvas.height * contentW) / canvas.width;
+
+    // 全体をA4縦1枚に収めるスケール
+    const scale = imgH > contentH ? contentH / imgH : 1;
+    const finalW = contentW * scale;
+    const finalH = imgH * scale;
+    const offsetX = margin + (contentW - finalW) / 2;
+    const offsetY = margin + (contentH - finalH) / 2;
+
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', offsetX, offsetY, finalW, finalH);
     pdf.save('メンタルスクリーニング結果.pdf');
-  } catch(e) { alert('PDF生成に失敗しました。画面をスクロールしてから再試行してください。'); }
+  } catch(e) { alert('PDF生成に失敗しました。'); }
   btn.textContent = '📄 PDFダウンロード';
   btn.disabled = false;
 }
