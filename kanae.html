@@ -373,3 +373,14 @@ ReactDOM.render(<App />, document.getElementById("root"));
 </script>
 </body>
 </html>
+function checkLog() {
+  const sheet = getSS_().getSheetByName(LOG_SHEET);
+  const last = sheet.getLastRow();
+  Logger.log("記録件数： " + (last - 1) + "件");
+  if (last >= 2) {
+    const rows = sheet.getRange(2, 1, last - 1, 4).getValues();
+    rows.forEach(function (r) {
+      Logger.log(r[0] + "  ／  会社コード: " + r[3]);
+    });
+  }
+}
