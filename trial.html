@@ -405,8 +405,11 @@ function showScreen(id) {
 // =====================================================
 // 同意画面
 // =====================================================
+let consentAt = null;
 function updateConsentBtn() {
-  document.getElementById('consent-btn').disabled = !document.getElementById('consent-check').checked;
+  const checked = document.getElementById('consent-check').checked;
+  document.getElementById('consent-btn').disabled = !checked;
+  consentAt = checked ? new Date().toISOString() : null;
 }
 function goToProfile() {
   showScreen('screen-profile');
@@ -716,7 +719,9 @@ function sendToGAS(totalScore, riskLabel, sectionPct, sectionNames, comment) {
     risk_label: riskLabel,
     section_text: sectionText,
     comment: comment,
-    version: IS_PREMIUM ? 'premium' : 'trial'
+   version: IS_PREMIUM ? 'premium' : 'trial',
+    consent: true,
+    consent_at: consentAt
   };
   const url = GAS_URL + '?action=submit&data=' + encodeURIComponent(JSON.stringify(payload));
   fetch(url)
