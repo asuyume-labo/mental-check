@@ -768,6 +768,7 @@ function sendToGAS(totalScore, riskLabel, sectionPct, sectionNames, comment) {
    version: IS_PREMIUM ? 'premium' : 'trial',
     consent: true,
     consent_at: consentAt
+};      
   const url = GAS_URL + '?action=submit&data=' + encodeURIComponent(JSON.stringify(payload));
   fetch(url)
     .then(r => r.json())
