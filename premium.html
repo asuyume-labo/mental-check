@@ -404,20 +404,30 @@ let radarChart = null;
 // パスワード認証（Premiumのみ）
 // =====================================================
 // パスワード：西暦下2桁＋月2桁（例：2026年6月→2606、2026年12月→2612）
-const now = new Date();
-const CURRENT_PASSWORD = String(now.getFullYear()).slice(-2) + String(now.getMonth() + 1).padStart(2, '0');
 function checkPassword() {
   const pw = document.getElementById('pw-input').value;
   const err = document.getElementById('pw-error');
   if (!pw || pw.length < 4) { err.textContent = '4桁のパスワードを入力してください'; return; }
-  if (pw === CURRENT_PASSWORD) {
-    document.getElementById('screen-pw').style.display = 'none';
-    document.getElementById('app-header').style.display = 'block';
-    showScreen('screen-consent');
-  } else {
-    err.textContent = 'パスワードが違います。担当者にご確認ください。';
-    document.getElementById('pw-input').value = '';
-  }
+  err.textContent = '確認中...';
+  fetch(GAS_URL + '?action=checkPw&pw=' + encodeURIComponent(pw))
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.ok) {
+        document.getElementById('screen-pw').style.display = 'none';
+        document.getElementById('app-header').style.display = 'block';
+        showScreen('screen-consent');
+      } else if (d && d.error === 'too_many_attempts') {
+        err.textContent = '試行回数の上限に達しました。しばらく経ってからお試しください。';
+        document.getElementById('pw-input').value = '';
+      } else {
+        err.textContent = 'パスワードが違います。担当者にご確認ください。';
+        document.getElementById('pw-input').value = '';
+      }
+    })
+    .catch(() => {
+      err.textContent = '通信エラーが発生しました。もう一度お試しください。';
+      document.getElementById('pw-input').value = '';
+    });
 }
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') checkPassword(); });
